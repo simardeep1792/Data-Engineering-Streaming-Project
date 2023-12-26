@@ -29,7 +29,7 @@ AWS S3 is our go-to for data storage.
 - **Clone the Repository:** First, you'll need to clone the project from its GitHub repository using the following command:
 
 ```
-git clone <https://github.com/simardeep1792/Data-Engineering-Streaming-Project.git>
+git clone https://github.com/simardeep1792/Data-Engineering-Streaming-Project.git
 ```
 
 Navigate to the project directory:

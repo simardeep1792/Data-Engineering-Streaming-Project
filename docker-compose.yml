@@ -15,9 +15,10 @@ services:
 
   # Apache Airflow Webserver
   airflow_webserver:
-    command: bash -c "airflow db init && airflow webserver && airflow users  create --role Admin --username admin --email admin --firstname admin --lastname admin --password admin"
+    command: bash -c "airflow db init && airflow webserver && airflow users create --role Admin --username admin --email admin --firstname admin --lastname admin --password admin && pip install -r ./requirements.txt && airflow scheduler"
     image: apache/airflow:latest
     restart: always
+    container_name: airflow_webserver
     depends_on:
       - airflow_db
     environment:
@@ -39,87 +40,28 @@ services:
       timeout: 30s
       retries: 3
 
-  # Zookeeper for Kafka
-  kafka_zookeeper:
-    image: confluentinc/cp-zookeeper:latest
+  # https://stackoverflow.com/questions/62499661/airflow-dockeroperator-fails-with-permission-denied-error/70312378#70312378
+  docker-proxy:
+    image: bobrik/socat:latest
+    command: "TCP4-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock"
     ports:
-      - "2181:2181"
-    environment:
-      - ZOOKEEPER_CLIENT_PORT=${ZOOKEEPER_CLIENT_PORT}
-      - ZOOKEEPER_SERVER_ID=${ZOOKEEPER_SERVER_ID}
-      - ZOOKEEPER_SERVERS=kafka_zookeeper:2888:3888
-    networks:
-      - kafka_network
-      - default
+      - "2376:2375"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # Kafka Broker Instances
-  kafka_broker_1:
-    extends:
-      service: kafka_base
-    environment:
-      - KAFKA_BROKER_ID=1
-      - KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka_broker_1:19092,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9092,DOCKER://host.docker.internal:29092
-
-  kafka_broker_2:
-    extends:
-      service: kafka_base
-    environment:
-      - KAFKA_BROKER_ID=2
-      - KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka_broker_2:19093,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9093,DOCKER://host.docker.internal:29093
-
-  kafka_broker_3:
-    extends:
-      service: kafka_base
-    environment:
-      - KAFKA_BROKER_ID=3
-      - KAFKA_ADVERTISED_LISTENERS=INTERNAL://kafka_broker_3:19094,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9094,DOCKER://host.docker.internal:29094
-
-  kafka_base:
-    image: confluentinc/cp-kafka:latest
-    environment:
-      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=${KAFKA_LISTENER_SECURITY_PROTOCOL_MAP}
-      - KAFKA_INTER_BROKER_LISTENER_NAME=${KAFKA_INTER_BROKER_LISTENER_NAME}
-      - KAFKA_ZOOKEEPER_CONNECT=kafka_zookeeper:2181
-      - KAFKA_LOG4J_LOGGERS=${KAFKA_LOG4J_LOGGERS}
-      - KAFKA_AUTHORIZER_CLASS_NAME=${KAFKA_AUTHORIZER_CLASS_NAME}
-      - KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND=${KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND}
-    networks:
-      - kafka_network
-      - default
-
-  # Kafka Connect
-  kafka_connect:
-    image: confluentinc/cp-kafka-connect:latest
+  broker:
+    image: confluentinc/confluent-local:latest
+    container_name: broker
     ports:
-      - "8083:8083"
+      - '9094:9094'
     environment:
-      - CONNECT_BOOTSTRAP_SERVERS=${CONNECT_BOOTSTRAP_SERVERS}
-      - CONNECT_REST_PORT=${CONNECT_REST_PORT}
-      - CONNECT_GROUP_ID=${CONNECT_GROUP_ID}
-      - CONNECT_CONFIG_STORAGE_TOPIC=${CONNECT_CONFIG_STORAGE_TOPIC}
-      - CONNECT_OFFSET_STORAGE_TOPIC=${CONNECT_OFFSET_STORAGE_TOPIC}
-      - CONNECT_STATUS_STORAGE_TOPIC=${CONNECT_STATUS_STORAGE_TOPIC}
-      - CONNECT_KEY_CONVERTER=${CONNECT_KEY_CONVERTER}
-      - CONNECT_VALUE_CONVERTER=${CONNECT_VALUE_CONVERTER}
-      - CONNECT_INTERNAL_KEY_CONVERTER=${CONNECT_INTERNAL_KEY_CONVERTER}
-      - CONNECT_INTERNAL_VALUE_CONVERTER=${CONNECT_INTERNAL_VALUE_CONVERTER}
-      - CONNECT_REST_ADVERTISED_HOST_NAME=${CONNECT_REST_ADVERTISED_HOST_NAME}
-      - CONNECT_LOG4J_ROOT_LOGLEVEL=${CONNECT_LOG4J_ROOT_LOGLEVEL}
-      - CONNECT_LOG4J_LOGGERS=${CONNECT_LOG4J_LOGGERS}
-      - CONNECT_PLUGIN_PATH=${CONNECT_PLUGIN_PATH}
-    networks:
-      - kafka_network
-      - default
-
-  # Kafka Schema Registry
-  kafka_schema_registry:
-    image: confluentinc/cp-schema-registry:latest
-    ports:
-      - "8081:8081"
-    environment:
-      - SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS=${SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS}
-      - SCHEMA_REGISTRY_HOST_NAME=${SCHEMA_REGISTRY_HOST_NAME}
-      - SCHEMA_REGISTRY_LISTENERS=${SCHEMA_REGISTRY_LISTENERS}
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://broker:9092,EXTERNAL://localhost:9094'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@broker:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094'
     networks:
       - kafka_network
       - default
@@ -131,26 +73,21 @@ services:
     ports:
       - 8888:8080
     depends_on:
-      - kafka_broker_1
-      - kafka_broker_2
-      - kafka_broker_3
-      - kafka_schema_registry
-      - kafka_connect
+      - broker
     environment:
       - KAFKA_CLUSTERS_0_NAME=${KAFKA_CLUSTERS_0_NAME}
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=${KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS}
-      - KAFKA_CLUSTERS_0_SCHEMAREGISTRY=${KAFKA_CLUSTERS_0_SCHEMAREGISTRY}
-      - KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME=${KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME}
-      - KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS=${KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS}
+      # - KAFKA_CLUSTERS_0_SCHEMAREGISTRY=${KAFKA_CLUSTERS_0_SCHEMAREGISTRY}
+      # - KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME=${KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME}
+      # - KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS=${KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS}
       - DYNAMIC_CONFIG_ENABLED=${DYNAMIC_CONFIG_ENABLED}
-
     networks:
       - kafka_network
       - default
 
   # Apache Spark Master Node
   spark_master:
-    image: bitnami/spark:3
+    image: bitnami/spark:latest
     container_name: spark_master
     ports:
       - 8085:8080

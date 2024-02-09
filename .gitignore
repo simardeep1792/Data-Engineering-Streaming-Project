@@ -1,2 +1,8 @@
 dags/__pycache__
+logs/
+dag_processor_manager/
+scheduler/
+scheduler_dg/
+plugins/
+
 

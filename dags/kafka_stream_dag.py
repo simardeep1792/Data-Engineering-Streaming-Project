@@ -31,8 +31,8 @@ with DAG(
         image='ccalderon911217/shot_chart_scraper:latest',
         api_version='auto',
         auto_remove=True,
-        docker_url='tcp://docker-proxy:2375',
-        network_mode='bridge',
+        docker_url="tcp://docker-proxy:2375",
+        network_mode='docker_streaming',
         dag=dag
     )
 
